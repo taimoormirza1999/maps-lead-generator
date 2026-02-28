@@ -1,0 +1,33 @@
+# Virtual environment
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# OS
+.DS_Store
+
+# Output data
+*.csv
+*.json
+!package.json
+output/
+
+# Node
+node_modules/
+package-lock.json
+
+# WhatsApp Web session data
+.wwebjs_auth/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment variables
+.env
+
+# Claude
+.claude/

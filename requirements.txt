@@ -1,0 +1,11 @@
+# Core dependencies
+playwright>=1.40.0
+scrapy>=2.11.0
+scrapy-playwright>=0.0.33
+
+# For SerpAPI alternative (more reliable)
+google-search-results>=2.4.2
+
+# For Excel export
+pandas>=2.0.0
+openpyxl>=3.1.0
