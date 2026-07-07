@@ -8,6 +8,10 @@ __pycache__/
 
 # OS
 .DS_Store
+Screenshot*.png
+Screen Shot*.png
+**/TemporaryItems/**
+NSIRD_*
 
 # Output data
 *.csv
@@ -21,6 +25,16 @@ package-lock.json
 
 # WhatsApp Web session data
 .wwebjs_auth/
+.wwebjs_cache/
+
+# Scraped leads & runtime outputs (private data)
+leads/
+logs/
+*.log
+batch_summary_*.txt
+
+# Nested project — has its own git repo, live sessions & sent-history
+whatsapp-support-bot/
 
 # IDE
 .vscode/

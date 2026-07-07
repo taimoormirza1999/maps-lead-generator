@@ -1,16 +1,62 @@
 """
 Google Maps Real Estate Agency Scraper
 Supports: Direct URL or Search Query
+Pass --with-emails to also extract emails from each business website (slower).
 """
 
 import asyncio
 import csv
+import re
 import sys
 from datetime import datetime
 from playwright.async_api import async_playwright
 
+_EMAIL_RE = re.compile(r'\b[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}\b')
+_JUNK = ['noreply', 'no-reply', 'example', 'yoursite', 'sentry', 'jquery', '@2x', 'schema.org']
+_JUNK_DOMAINS = {'example.com', 'test.com', 'sentry.io', 'wix.com', 'schema.org', 'w3.org'}
 
-async def scrape_google_maps(url_or_query: str, output_file: str = None):
+async def _extract_email(context, url: str) -> str:
+    page = None
+    try:
+        page = await context.new_page()
+        await page.goto(url, wait_until='domcontentloaded', timeout=12000)
+        for el in await page.locator('a[href^="mailto:"]').all():
+            href = (await el.get_attribute('href') or '').replace('mailto:', '').split('?')[0].strip()
+            if '@' in href and href.split('@')[-1].lower() not in _JUNK_DOMAINS and not any(j in href.lower() for j in _JUNK):
+                return href.lower()
+        try:
+            text = await page.inner_text('body')
+            valid = [e.lower() for e in _EMAIL_RE.findall(text)
+                     if e.split('@')[-1].lower() not in _JUNK_DOMAINS and not any(j in e.lower() for j in _JUNK)]
+            if valid:
+                return valid[0]
+        except Exception:
+            pass
+        try:
+            await page.goto(url.rstrip('/') + '/contact', wait_until='domcontentloaded', timeout=8000)
+            for el in await page.locator('a[href^="mailto:"]').all():
+                href = (await el.get_attribute('href') or '').replace('mailto:', '').split('?')[0].strip()
+                if '@' in href and href.split('@')[-1].lower() not in _JUNK_DOMAINS and not any(j in href.lower() for j in _JUNK):
+                    return href.lower()
+            text = await page.inner_text('body')
+            valid = [e.lower() for e in _EMAIL_RE.findall(text)
+                     if e.split('@')[-1].lower() not in _JUNK_DOMAINS and not any(j in e.lower() for j in _JUNK)]
+            if valid:
+                return valid[0]
+        except Exception:
+            pass
+        return ''
+    except Exception:
+        return ''
+    finally:
+        if page:
+            try:
+                await page.close()
+            except Exception:
+                pass
+
+
+async def scrape_google_maps(url_or_query: str, output_file: str = None, extract_emails: bool = False, headless: bool = False):
     """
     Scrape business listings from Google Maps
 
@@ -20,7 +66,14 @@ async def scrape_google_maps(url_or_query: str, output_file: str = None):
     """
 
     if output_file is None:
-        output_file = f"real_estate_agencies_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.csv"
+        # Generate a clean filename from the query
+        if url_or_query.startswith('http'):
+            safe_name = "scraped"
+        else:
+            safe_name = url_or_query.lower().replace(' ', '-').replace(',', '')
+            safe_name = ''.join(c for c in safe_name if c.isalnum() or c == '-')
+            safe_name = safe_name.strip('-')[:60]  # max 60 chars
+        output_file = f"{safe_name}_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.csv"
 
     # Detect if input is URL or search query
     if url_or_query.startswith('http'):
@@ -40,7 +93,7 @@ async def scrape_google_maps(url_or_query: str, output_file: str = None):
     businesses = []
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
+        browser = await p.chromium.launch(headless=headless)
         context = await browser.new_context(
             viewport={'width': 1440, 'height': 900},
             locale='en-US'
@@ -51,21 +104,33 @@ async def scrape_google_maps(url_or_query: str, output_file: str = None):
         await page.goto(url, wait_until='domcontentloaded', timeout=60000)
         await asyncio.sleep(5)
 
-        # Scroll to load more results
-        print("Loading results...")
+        # Scroll to load ALL results (keeps scrolling until no new results)
+        print("Loading all results...")
         try:
             results_panel = page.locator('div[role="feed"]')
-            for _ in range(3):
+            prev_count = 0
+            stuck_count = 0
+            max_scrolls = 50
+            for scroll_num in range(max_scrolls):
                 await results_panel.evaluate('el => el.scrollTop = el.scrollHeight')
                 await asyncio.sleep(2)
-        except:
-            pass
+                current_count = await page.locator('a.hfpxzc').count()
+                print(f"  Scroll {scroll_num + 1}: {current_count} results loaded")
+                if current_count == prev_count:
+                    stuck_count += 1
+                    if stuck_count >= 3:  # 3 scrolls with no new results = end
+                        break
+                else:
+                    stuck_count = 0
+                prev_count = current_count
+        except Exception as e:
+            print(f"  Scroll error: {e}")
 
         # Get all business links
         links = await page.locator('a.hfpxzc').all()
-        print(f"Found {len(links)} businesses")
+        print(f"Found {len(links)} businesses total")
 
-        for i, link in enumerate(links[:20]):  # Limit to 20
+        for i, link in enumerate(links):  # Process ALL results
             try:
                 business = {
                     'Name': '', 'Email': '', 'Phone': '', 'Social Media': '', 'Website': ''
@@ -96,9 +161,17 @@ async def scrape_google_maps(url_or_query: str, output_file: str = None):
                 except:
                     pass
 
+                # Extract email from website (only if --with-emails flag passed)
+                if extract_emails and business.get('Website'):
+                    try:
+                        business['Email'] = await _extract_email(context, business['Website'])
+                    except Exception:
+                        pass
+
                 if business['Name']:
                     businesses.append(business)
-                    print(f"  [{i+1}] {business['Name'][:40]} | {business['Phone'] or 'No phone'}")
+                    email_str = f" | {business['Email']}" if business.get('Email') else ''
+                    print(f"  [{i+1}] {business['Name'][:40]} | {business['Phone'] or 'No phone'}{email_str}")
 
             except Exception as e:
                 print(f"  Error on item {i+1}: {str(e)[:50]}")
@@ -135,8 +208,11 @@ def main():
     print("=" * 50)
 
     # Check for command line argument
-    if len(sys.argv) > 1:
-        url_or_query = ' '.join(sys.argv[1:])
+    with_emails = '--with-emails' in sys.argv
+    args = [a for a in sys.argv[1:] if a != '--with-emails']
+
+    if args:
+        url_or_query = ' '.join(args)
     else:
         print("\nEnter a Google URL or search query:")
         print("Examples:")
@@ -150,7 +226,7 @@ def main():
         url_or_query = "Real estate agency Riyadh Saudi Arabia"
         print(f"Using default: {url_or_query}")
 
-    asyncio.run(scrape_google_maps(url_or_query))
+    asyncio.run(scrape_google_maps(url_or_query, extract_emails=with_emails))
 
 
 if __name__ == "__main__":

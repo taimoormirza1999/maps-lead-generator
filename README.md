@@ -46,12 +46,12 @@ Then enter your search query or URL when prompted.
 
 ### With Search Query
 ```bash
-python google_maps_scraper.py "Real estate agency Riyadh Saudi Arabia"
+python google_maps_scraper.py "car showroom agency dubai marina"
 ```
 
 ### With Google URL
 ```bash
-python google_maps_scraper.py "https://www.google.com/search?q=Real+estate+agency+Riyadh&udm=1"
+python google_maps_scraper.py "https://www.google.com/search?q=Car+showroom+agency+marina+dubai&udm=1"
 ```
 
 ## Output
